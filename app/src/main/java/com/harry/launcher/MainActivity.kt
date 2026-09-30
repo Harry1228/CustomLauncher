@@ -15,6 +15,7 @@ import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.combinedClickable
+import androidx.compose.foundation.gestures.detectVerticalDragGestures
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.grid.GridCells
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
@@ -31,6 +32,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
@@ -67,6 +69,15 @@ class MainActivity : ComponentActivity() {
                     .fillMaxSize()
                     .statusBarsPadding()
                     .navigationBarsPadding()
+                    .pointerInput(Unit) {
+                        detectVerticalDragGestures { _, dragAmount ->
+                            if (dragAmount < -25 && !isDrawerOpen) {
+                                isDrawerOpen = true // Swipe UP opens drawer
+                            } else if (dragAmount > 25 && isDrawerOpen) {
+                                isDrawerOpen = false // Swipe DOWN closes drawer
+                            }
+                        }
+                    }
             ) {
                 // Home Screen
                 HomeScreen(
@@ -94,12 +105,12 @@ class MainActivity : ComponentActivity() {
                     )
                 }
 
-                // Long Click App Info
+                // App Info Dialog on Long-press
                 selectedAppForMenu?.let { app ->
                     AlertDialog(
                         onDismissRequest = { selectedAppForMenu = null },
                         title = { Text(text = app.label) },
-                        text = { Text("Open app settings for ${app.label}?") },
+                        text = { Text("Open system app settings for ${app.label}?") },
                         confirmButton = {
                             TextButton(onClick = {
                                 openAppSettings(app.packageName)
@@ -127,7 +138,8 @@ class MainActivity : ComponentActivity() {
         val activities: List<ResolveInfo> = pm.queryIntentActivities(intent, 0)
 
         return activities
-            .filter { it.activityInfo.packageName != packageName }
+            .filter { it.activityInfo != null && it.activityInfo.packageName != packageName }
+            .distinctBy { it.activityInfo.packageName } // Prevents duplicate key crashes
             .map {
                 AppModel(
                     label = it.loadLabel(pm).toString(),
@@ -139,17 +151,27 @@ class MainActivity : ComponentActivity() {
     }
 
     private fun launchApp(packageName: String) {
-        val launchIntent = packageManager.getLaunchIntentForPackage(packageName)
-        if (launchIntent != null) {
-            startActivity(launchIntent)
+        try {
+            val launchIntent = packageManager.getLaunchIntentForPackage(packageName)
+            if (launchIntent != null) {
+                launchIntent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                startActivity(launchIntent)
+            }
+        } catch (e: Exception) {
+            // Failsafe against unlaunchable system packages
         }
     }
 
     private fun openAppSettings(packageName: String) {
-        val intent = Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS).apply {
-            data = Uri.fromParts("package", packageName, null)
+        try {
+            val intent = Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS).apply {
+                data = Uri.fromParts("package", packageName, null)
+                addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+            }
+            startActivity(intent)
+        } catch (e: Exception) {
+            // Failsafe
         }
-        startActivity(intent)
     }
 }
 
@@ -289,7 +311,7 @@ fun AppDrawer(
     Box(
         modifier = Modifier
             .fillMaxSize()
-            .background(Color(0xE6121212))
+            .background(Color(0xF0121212))
     ) {
         Column(modifier = Modifier.fillMaxSize()) {
             Row(
@@ -338,7 +360,7 @@ fun AppDrawer(
                 contentPadding = PaddingValues(horizontal = 12.dp, vertical = 16.dp),
                 verticalArrangement = Arrangement.spacedBy(16.dp)
             ) {
-                items(filteredApps, key = { it.packageName }) { app ->
+                items(filteredApps) { app ->
                     AppIcon(
                         app = app,
                         showLabel = true,
