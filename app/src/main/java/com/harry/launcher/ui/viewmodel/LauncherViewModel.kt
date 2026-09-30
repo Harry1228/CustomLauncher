@@ -23,36 +23,54 @@ class LauncherViewModel(
     val uiState: StateFlow<LauncherUiState> = _uiState.asStateFlow()
 
     init {
-        loadInitialApps()
-        loadWidgets()
+        loadInitialData()
         observePackageChanges()
     }
 
-    private fun loadInitialApps() {
+    private fun loadInitialData() {
         viewModelScope.launch {
-            _uiState.update { it.copy(isLoading = true) }
-            val apps = repository.loadInstalledApps()
-            val preferredDockPkgs = repository.resolveDefaultDockPackages()
-
-            val dock = mutableListOf<AppModel>()
-            for (pkg in preferredDockPkgs) {
-                apps.find { it.packageName == pkg }?.let { dock.add(it) }
-            }
-            if (dock.size < 4) {
-                for (app in apps) {
-                    if (!dock.contains(app)) dock.add(app)
-                    if (dock.size == 4) break
-                }
-            }
-
             _uiState.update {
                 it.copy(
-                    allApps = apps,
-                    filteredApps = apps,
-                    dockApps = dock.take(4),
-                    isLoading = false
+                    isLoading = true,
+                    selectedIconPack = repository.getSelectedIconPack(),
+                    availableIconPacks = repository.getAvailableIconPacks(),
+                    widgetIds = repository.getSavedWidgetIds()
                 )
             }
+            refreshAppsList()
+        }
+    }
+
+    private suspend fun refreshAppsList() {
+        val apps = repository.loadInstalledApps()
+        val preferredDockPkgs = repository.resolveDefaultDockPackages()
+
+        val dock = mutableListOf<AppModel>()
+        for (pkg in preferredDockPkgs) {
+            apps.find { it.packageName == pkg }?.let { dock.add(it) }
+        }
+        if (dock.size < 4) {
+            for (app in apps) {
+                if (!dock.contains(app)) dock.add(app)
+                if (dock.size == 4) break
+            }
+        }
+
+        _uiState.update { state ->
+            state.copy(
+                allApps = apps,
+                filteredApps = applyFilter(apps, state.searchQuery),
+                dockApps = dock.take(4),
+                isLoading = false
+            )
+        }
+    }
+
+    fun applyIconPack(packageName: String?) {
+        viewModelScope.launch {
+            _uiState.update { it.copy(isLoading = true, selectedIconPack = packageName) }
+            repository.setSelectedIconPack(packageName)
+            refreshAppsList()
         }
     }
 
@@ -73,46 +91,45 @@ class LauncherViewModel(
         _uiState.update { state ->
             val updatedAll = (state.allApps.filterNot { it.packageName == packageName } + newApp)
                 .sortedBy { it.label.lowercase() }
-            val updatedFiltered = applyFilter(updatedAll, state.searchQuery)
-            state.copy(allApps = updatedAll, filteredApps = updatedFiltered)
+            state.copy(
+                allApps = updatedAll,
+                filteredApps = applyFilter(updatedAll, state.searchQuery)
+            )
         }
     }
 
     private fun handlePackageRemoved(packageName: String) {
+        repository.evictFromCache(packageName)
         _uiState.update { state ->
             val updatedAll = state.allApps.filterNot { it.packageName == packageName }
-            val updatedFiltered = state.filteredApps.filterNot { it.packageName == packageName }
-            val updatedDock = state.dockApps.filterNot { it.packageName == packageName }
             state.copy(
                 allApps = updatedAll,
-                filteredApps = updatedFiltered,
-                dockApps = updatedDock
+                filteredApps = applyFilter(updatedAll, state.searchQuery),
+                dockApps = state.dockApps.filterNot { it.packageName == packageName }
             )
         }
     }
 
     private suspend fun handlePackageUpdated(packageName: String) {
+        repository.evictFromCache(packageName)
         val updatedApp = repository.loadSingleApp(packageName) ?: return
         _uiState.update { state ->
             val updatedAll = state.allApps.map { if (it.packageName == packageName) updatedApp else it }
                 .sortedBy { it.label.lowercase() }
-            val updatedFiltered = applyFilter(updatedAll, state.searchQuery)
-            val updatedDock = state.dockApps.map { if (it.packageName == packageName) updatedApp else it }
             state.copy(
                 allApps = updatedAll,
-                filteredApps = updatedFiltered,
-                dockApps = updatedDock
+                filteredApps = applyFilter(updatedAll, state.searchQuery),
+                dockApps = state.dockApps.map { if (it.packageName == packageName) updatedApp else it }
             )
         }
     }
 
-    private fun applyFilter(apps: List<AppModel>, query: String): List<AppModel> {
-        return if (query.isBlank()) apps else apps.filter { it.label.contains(query, ignoreCase = true) }
+    fun onTrimMemory(level: Int) {
+        repository.trimMemory(level)
     }
 
-    private fun loadWidgets() {
-        val saved = repository.getSavedWidgetIds()
-        _uiState.update { it.copy(widgetIds = saved) }
+    private fun applyFilter(apps: List<AppModel>, query: String): List<AppModel> {
+        return if (query.isBlank()) apps else apps.filter { it.label.contains(query, ignoreCase = true) }
     }
 
     fun addWidget(id: Int) {
