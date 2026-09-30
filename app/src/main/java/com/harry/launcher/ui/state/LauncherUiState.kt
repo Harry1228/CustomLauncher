@@ -1,5 +1,6 @@
 package com.harry.launcher.ui.state
 
+import com.harry.launcher.data.iconpack.IconPackInfo
 import com.harry.launcher.data.model.AppModel
 
 data class LauncherUiState(
@@ -7,6 +8,8 @@ data class LauncherUiState(
     val filteredApps: List<AppModel> = emptyList(),
     val dockApps: List<AppModel> = emptyList(),
     val widgetIds: List<Int> = emptyList(),
+    val availableIconPacks: List<IconPackInfo> = emptyList(),
+    val selectedIconPack: String? = null,
     val searchQuery: String = "",
     val isDrawerOpen: Boolean = false,
     val isSettingsOpen: Boolean = false,
