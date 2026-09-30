@@ -14,6 +14,9 @@ import android.content.Intent
 import android.content.SharedPreferences
 import android.content.pm.PackageManager
 import android.content.pm.ResolveInfo
+import android.graphics.Bitmap
+import android.graphics.Canvas
+import android.graphics.drawable.BitmapDrawable
 import android.graphics.drawable.Drawable
 import android.net.Uri
 import android.os.Build
@@ -31,8 +34,10 @@ import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.combinedClickable
+import androidx.compose.foundation.gestures.Orientation
 import androidx.compose.foundation.gestures.detectTapGestures
-import androidx.compose.foundation.gestures.detectVerticalDragGestures
+import androidx.compose.foundation.gestures.draggable
+import androidx.compose.foundation.gestures.rememberDraggableState
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.grid.GridCells
@@ -49,6 +54,8 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.ImageBitmap
+import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalHapticFeedback
@@ -61,7 +68,6 @@ import androidx.compose.ui.viewinterop.AndroidView
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.viewModelScope
-import com.google.accompanist.drawablepainter.rememberDrawablePainter
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -74,14 +80,14 @@ import java.util.Date
 import java.util.Locale
 
 // ==========================================
-// 1. DATA LAYER & PERSISTENCE
+// 1. DATA LAYER (Hardware-Cached ImageBitmap)
 // ==========================================
 
 @Immutable
 data class AppModel(
     val label: String,
     val packageName: String,
-    val icon: Drawable
+    val icon: ImageBitmap
 )
 
 class AppRepository(private val context: Context) {
@@ -100,13 +106,27 @@ class AppRepository(private val context: Context) {
             .filter { it.activityInfo != null && it.activityInfo.packageName != context.packageName }
             .distinctBy { it.activityInfo.packageName }
             .map {
+                val drawable = it.loadIcon(pm)
                 AppModel(
                     label = it.loadLabel(pm).toString(),
                     packageName = it.activityInfo.packageName,
-                    icon = it.loadIcon(pm)
+                    icon = drawableToHardwareBitmap(drawable)
                 )
             }
             .sortedBy { it.label.lowercase() }
+    }
+
+    private fun drawableToHardwareBitmap(drawable: Drawable): ImageBitmap {
+        if (drawable is BitmapDrawable && drawable.bitmap != null) {
+            return drawable.bitmap.asImageBitmap()
+        }
+        val width = if (drawable.intrinsicWidth > 0) drawable.intrinsicWidth else 128
+        val height = if (drawable.intrinsicHeight > 0) drawable.intrinsicHeight else 128
+        val bitmap = Bitmap.createBitmap(width, height, Bitmap.Config.ARGB_8888)
+        val canvas = Canvas(bitmap)
+        drawable.setBounds(0, 0, canvas.width, canvas.height)
+        drawable.draw(canvas)
+        return bitmap.asImageBitmap()
     }
 
     fun getSavedWidgetIds(): List<Int> {
@@ -121,7 +141,7 @@ class AppRepository(private val context: Context) {
 }
 
 // ==========================================
-// 2. STATE & VIEWMODEL LAYER
+// 2. STATE & VIEWMODEL
 // ==========================================
 
 data class LauncherUiState(
@@ -236,7 +256,7 @@ class LauncherViewModelFactory(private val repository: AppRepository) : ViewMode
 }
 
 // ==========================================
-// 3. MAIN ACTIVITY & WIDGET HOST
+// 3. MAIN ACTIVITY
 // ==========================================
 
 class MainActivity : ComponentActivity() {
@@ -250,7 +270,6 @@ class MainActivity : ComponentActivity() {
         LauncherViewModelFactory(AppRepository(applicationContext))
     }
 
-    // Handles widget configuration (e.g. KWGT widget selection or settings)
     private val configureWidgetLauncher = registerForActivityResult(
         ActivityResultContracts.StartActivityForResult()
     ) { result ->
@@ -268,7 +287,6 @@ class MainActivity : ComponentActivity() {
         pendingWidgetId = AppWidgetManager.INVALID_APPWIDGET_ID
     }
 
-    // Handles widget picker dialog
     private val pickWidgetLauncher = registerForActivityResult(
         ActivityResultContracts.StartActivityForResult()
     ) { result ->
@@ -304,7 +322,6 @@ class MainActivity : ComponentActivity() {
 
         setContent {
             val state by viewModel.uiState.collectAsState()
-            val haptic = LocalHapticFeedback.current
 
             BackHandler(enabled = state.isDrawerOpen || state.isSettingsOpen) {
                 if (state.isSettingsOpen) viewModel.setSettingsOpen(false)
@@ -316,25 +333,15 @@ class MainActivity : ComponentActivity() {
                     .fillMaxSize()
                     .statusBarsPadding()
                     .navigationBarsPadding()
-                    .pointerInput(Unit) {
-                        detectTapGestures(onLongPress = {
-                            haptic.performHapticFeedback(HapticFeedbackType.LongPress)
-                            viewModel.setHomeScreenMenu(true)
-                        })
-                    }
-                    .pointerInput(Unit) {
-                        detectVerticalDragGestures { _, dragAmount ->
-                            if (dragAmount < -30 && !state.isDrawerOpen) viewModel.setDrawerOpen(true)
-                            else if (dragAmount > 30 && state.isDrawerOpen) viewModel.setDrawerOpen(false)
-                        }
-                    }
             ) {
+                // Home Screen
                 HomeScreen(
                     dockApps = state.dockApps,
                     widgetIds = state.widgetIds,
                     appWidgetHost = appWidgetHost,
                     appWidgetManager = appWidgetManager,
                     onOpenDrawer = { viewModel.setDrawerOpen(true) },
+                    onLongPressHome = { viewModel.setHomeScreenMenu(true) },
                     onLaunchApp = { launchApp(it) },
                     onRemoveWidget = { id ->
                         appWidgetHost.deleteAppWidgetId(id)
@@ -342,16 +349,17 @@ class MainActivity : ComponentActivity() {
                     }
                 )
 
+                // App Drawer Layer with High-Speed Spring Animation
                 AnimatedVisibility(
                     visible = state.isDrawerOpen,
                     enter = slideInVertically(
                         initialOffsetY = { it },
                         animationSpec = tween(durationMillis = 180, easing = FastOutSlowInEasing)
-                    ) + fadeIn(animationSpec = tween(140)),
+                    ) + fadeIn(animationSpec = tween(120)),
                     exit = slideOutVertically(
                         targetOffsetY = { it },
                         animationSpec = tween(durationMillis = 150, easing = FastOutSlowInEasing)
-                    ) + fadeOut(animationSpec = tween(120))
+                    ) + fadeOut(animationSpec = tween(100))
                 ) {
                     AppDrawer(
                         state = state,
@@ -359,13 +367,11 @@ class MainActivity : ComponentActivity() {
                         onClose = { viewModel.setDrawerOpen(false) },
                         onOpenSettings = { viewModel.setSettingsOpen(true) },
                         onLaunchApp = { launchApp(it) },
-                        onAppLongClick = {
-                            haptic.performHapticFeedback(HapticFeedbackType.LongPress)
-                            viewModel.setSelectedAppForMenu(it)
-                        }
+                        onAppLongClick = { viewModel.setSelectedAppForMenu(it) }
                     )
                 }
 
+                // Home Screen Long-Press Menu
                 if (state.showHomeScreenMenu) {
                     AlertDialog(
                         onDismissRequest = { viewModel.setHomeScreenMenu(false) },
@@ -404,6 +410,7 @@ class MainActivity : ComponentActivity() {
                     )
                 }
 
+                // App Info Dialog
                 state.selectedAppForMenu?.let { app ->
                     AlertDialog(
                         onDismissRequest = { viewModel.setSelectedAppForMenu(null) },
@@ -421,6 +428,7 @@ class MainActivity : ComponentActivity() {
                     )
                 }
 
+                // Nova-Style Launcher Settings Sheet
                 if (state.isSettingsOpen) {
                     ModalBottomSheet(
                         onDismissRequest = { viewModel.setSettingsOpen(false) },
@@ -458,9 +466,7 @@ class MainActivity : ComponentActivity() {
                 putExtra(AppWidgetManager.EXTRA_APPWIDGET_ID, newId)
             }
             pickWidgetLauncher.launch(pickIntent)
-        } catch (e: Exception) {
-            // Failsafe against picker launch denials
-        }
+        } catch (_: Exception) {}
     }
 
     private fun launchApp(packageName: String) {
@@ -469,7 +475,7 @@ class MainActivity : ComponentActivity() {
                 addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
                 startActivity(this)
             }
-        } catch (e: Exception) {}
+        } catch (_: Exception) {}
     }
 
     private fun openAppSettings(packageName: String) {
@@ -479,13 +485,13 @@ class MainActivity : ComponentActivity() {
                 addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
             }
             startActivity(intent)
-        } catch (e: Exception) {}
+        } catch (_: Exception) {}
     }
 
     private fun openWallpaperChooser() {
         try {
             startActivity(Intent.createChooser(Intent(Intent.ACTION_SET_WALLPAPER), "Choose Wallpaper"))
-        } catch (e: Exception) {}
+        } catch (_: Exception) {}
     }
 
     private fun requestDefaultLauncherRole() {
@@ -498,14 +504,14 @@ class MainActivity : ComponentActivity() {
         }
         try {
             startActivity(Intent(Settings.ACTION_HOME_SETTINGS))
-        } catch (e: Exception) {
+        } catch (_: Exception) {
             startActivity(Intent(Settings.ACTION_SETTINGS))
         }
     }
 }
 
 // ==========================================
-// 4. UI SCREENS & WIDGET HOST CONTAINER
+// 4. UI SCREENS
 // ==========================================
 
 @Composable
@@ -515,20 +521,39 @@ fun HomeScreen(
     appWidgetHost: AppWidgetHost,
     appWidgetManager: AppWidgetManager,
     onOpenDrawer: () -> Unit,
+    onLongPressHome: () -> Unit,
     onLaunchApp: (String) -> Unit,
     onRemoveWidget: (Int) -> Unit
 ) {
     val currentTime = remember { SimpleDateFormat("HH:mm", Locale.getDefault()).format(Date()) }
     val currentDate = remember { SimpleDateFormat("EEEE, MMMM d", Locale.getDefault()).format(Date()) }
+    val haptic = LocalHapticFeedback.current
 
     Column(
         modifier = Modifier
             .fillMaxSize()
-            .padding(horizontal = 16.dp, vertical = 8.dp),
+            .padding(horizontal = 16.dp, vertical = 8.dp)
+            .draggable(
+                state = rememberDraggableState { delta ->
+                    // Swiping up anywhere on the desktop opens the app drawer
+                    if (delta < -14f) {
+                        onOpenDrawer()
+                    }
+                },
+                orientation = Orientation.Vertical
+            )
+            .pointerInput(Unit) {
+                detectTapGestures(
+                    onLongPress = {
+                        haptic.performHapticFeedback(HapticFeedbackType.LongPress)
+                        onLongPressHome()
+                    }
+                )
+            },
         verticalArrangement = Arrangement.SpaceBetween,
         horizontalAlignment = Alignment.CenterHorizontally
     ) {
-        // Digital Clock and Search
+        // Digital Clock and Search Surface
         Column(
             modifier = Modifier
                 .padding(top = 32.dp)
@@ -561,12 +586,12 @@ fun HomeScreen(
             }
         }
 
-        // Widgets Scroll Area (KWGT, Weather, Clocks)
+        // Widgets Area
         LazyColumn(
             modifier = Modifier
                 .weight(1f)
                 .fillMaxWidth()
-                .padding(vertical = 12.dp),
+                .padding(vertical = 8.dp),
             verticalArrangement = Arrangement.spacedBy(10.dp)
         ) {
             items(items = widgetIds, key = { it }) { id ->
@@ -579,7 +604,7 @@ fun HomeScreen(
             }
         }
 
-        // Bottom Dock
+        // Bottom Dock (Swiping up from dock also opens drawer)
         Surface(
             shape = RoundedCornerShape(26.dp),
             color = Color.Black.copy(alpha = 0.45f),
@@ -653,7 +678,7 @@ fun WidgetHostItem(
             AlertDialog(
                 onDismissRequest = { showDeleteConfirm = false },
                 title = { Text("Widget Options") },
-                text = { Text("Remove this widget from the home screen?") },
+                text = { Text("Remove this widget from home screen?") },
                 confirmButton = {
                     Button(
                         onClick = {
@@ -691,7 +716,13 @@ fun AppDrawer(
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .padding(start = 16.dp, end = 12.dp, top = 16.dp, bottom = 8.dp),
+                    .padding(start = 16.dp, end = 12.dp, top = 16.dp, bottom = 8.dp)
+                    .draggable(
+                        state = rememberDraggableState { delta ->
+                            if (delta > 15f) onClose()
+                        },
+                        orientation = Orientation.Vertical
+                    ),
                 verticalAlignment = Alignment.CenterVertically
             ) {
                 TextField(
@@ -736,13 +767,13 @@ fun AppDrawer(
                 LazyVerticalGrid(
                     columns = GridCells.Fixed(state.gridColumns),
                     modifier = Modifier.fillMaxSize(),
-                    contentPadding = PaddingValues(horizontal = 8.dp, vertical = 12.dp),
-                    verticalArrangement = Arrangement.spacedBy(14.dp)
+                    contentPadding = PaddingValues(horizontal = 8.dp, vertical = 10.dp),
+                    verticalArrangement = Arrangement.spacedBy(12.dp)
                 ) {
                     items(
                         items = state.filteredApps,
                         key = { it.packageName },
-                        contentType = { "app_tile" }
+                        contentType = { "app" }
                     ) { app ->
                         AppIconItem(
                             app = app,
@@ -764,6 +795,8 @@ fun AppIconItem(
     onClick: () -> Unit,
     onLongClick: (() -> Unit)? = null
 ) {
+    val haptic = LocalHapticFeedback.current
+
     Column(
         horizontalAlignment = Alignment.CenterHorizontally,
         modifier = Modifier
@@ -771,12 +804,15 @@ fun AppIconItem(
             .clip(RoundedCornerShape(12.dp))
             .combinedClickable(
                 onClick = onClick,
-                onLongClick = onLongClick
+                onLongClick = {
+                    haptic.performHapticFeedback(HapticFeedbackType.LongPress)
+                    onLongClick?.invoke()
+                }
             )
             .padding(vertical = 4.dp)
     ) {
         Image(
-            painter = rememberDrawablePainter(drawable = app.icon),
+            bitmap = app.icon,
             contentDescription = app.label,
             modifier = Modifier.size(50.dp)
         )
