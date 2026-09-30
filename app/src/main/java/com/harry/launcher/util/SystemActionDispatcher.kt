@@ -12,10 +12,6 @@ import java.lang.reflect.Method
 
 class SystemActionDispatcher(private val context: Context) {
 
-    /**
-     * Expands the Android notification panel via reflection on the StatusBarManager.
-     * Works across standard AOSP and OEM vendor builds (MIUI, HyperOS, One UI, ColorOS).
-     */
     @SuppressLint("WrongConstant")
     fun expandNotificationShade(): Boolean {
         return try {
@@ -30,10 +26,6 @@ class SystemActionDispatcher(private val context: Context) {
         }
     }
 
-    /**
-     * Launches an application with safety flags to prevent task hijacking
-     * and catches unexported/restricted activity exceptions.
-     */
     fun launchAppSafely(packageName: String): Boolean {
         return try {
             val launchIntent = context.packageManager.getLaunchIntentForPackage(packageName)?.apply {
@@ -54,9 +46,6 @@ class SystemActionDispatcher(private val context: Context) {
         }
     }
 
-    /**
-     * Opens system application detail settings (App Info) defensively.
-     */
     fun openAppSettingsSafely(packageName: String) {
         try {
             val intent = Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS).apply {
@@ -69,9 +58,6 @@ class SystemActionDispatcher(private val context: Context) {
         }
     }
 
-    /**
-     * Triggers the system wallpaper picker with fallbacks.
-     */
     fun openWallpaperPickerSafely() {
         try {
             val intent = Intent(Intent.ACTION_SET_WALLPAPER).apply {
@@ -86,9 +72,6 @@ class SystemActionDispatcher(private val context: Context) {
         }
     }
 
-    /**
-     * Directs the user to default home launcher settings, supporting RoleManager on Android 10+.
-     */
     fun openDefaultLauncherSettings() {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
             val roleManager = context.getSystemService(Context.ROLE_SERVICE) as? RoleManager
@@ -102,7 +85,6 @@ class SystemActionDispatcher(private val context: Context) {
                 }
             }
         }
-
         try {
             val intent = Intent(Settings.ACTION_HOME_SETTINGS).apply {
                 addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
@@ -119,8 +101,6 @@ class SystemActionDispatcher(private val context: Context) {
                 addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
             }
             context.startActivity(intent)
-        } catch (_: Exception) {
-            // Failsafe: device does not permit settings access
-        }
+        } catch (_: Exception) {}
     }
 }

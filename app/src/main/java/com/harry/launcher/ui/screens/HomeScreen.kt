@@ -61,8 +61,8 @@ fun HomeScreen(
             .draggable(
                 state = rememberDraggableState { delta ->
                     when {
-                        delta < -12f -> onOpenDrawer() // Swipe Up -> Drawer
-                        delta > 12f -> onSwipeDown()   // Swipe Down -> Notifications Panel
+                        delta < -12f -> onOpenDrawer() // Swipe Up -> Open Drawer
+                        delta > 12f -> onSwipeDown()   // Swipe Down -> Notification Shade
                     }
                 },
                 orientation = Orientation.Vertical
@@ -70,7 +70,7 @@ fun HomeScreen(
         verticalArrangement = Arrangement.SpaceBetween,
         horizontalAlignment = Alignment.CenterHorizontally
     ) {
-        // Digital Clock & Search Bar
+        // Digital Clock and Search Bar
         Column(
             modifier = Modifier
                 .padding(top = 28.dp)
@@ -103,7 +103,7 @@ fun HomeScreen(
             }
         }
 
-        // Center Touch Surface for Gestures and Widgets
+        // Center Touch & Gesture Area
         Box(
             modifier = Modifier
                 .weight(1f)
@@ -138,7 +138,7 @@ fun HomeScreen(
             }
         }
 
-        // Dock Layer
+        // 5-Column Dock
         Surface(
             shape = RoundedCornerShape(26.dp),
             color = Color.Black.copy(alpha = 0.45f),
