@@ -2,7 +2,6 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android"
     xmlns:tools="http://schemas.android.com/tools">
 
-    <!-- Essential launcher permissions permitted by Google Play Policy -->
     <uses-permission android:name="android.permission.QUERY_ALL_PACKAGES"
         tools:ignore="QueryAllPackagesPermission" />
     <uses-permission android:name="android.permission.SET_WALLPAPER" />
@@ -12,7 +11,7 @@
         android:icon="@android:drawable/sym_def_app_icon"
         android:label="NovaLite Launcher"
         android:supportsRtl="true"
-        android:theme="@android:style/Theme.Material.NoActionBar">
+        android:theme="@android:style/Theme.Wallpaper.NoTitleBar">
 
         <activity
             android:name=".MainActivity"
@@ -21,16 +20,14 @@
             android:clearTaskOnLaunch="true"
             android:stateNotNeeded="true"
             android:windowSoftInputMode="adjustPan"
-            android:theme="@android:style/Theme.Material.NoActionBar">
+            android:theme="@android:style/Theme.Wallpaper.NoTitleBar">
 
-            <!-- System Home Category Intent -->
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />
                 <category android:name="android.intent.category.HOME" />
                 <category android:name="android.intent.category.DEFAULT" />
             </intent-filter>
 
-            <!-- Standard Launcher App Drawer Intent -->
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />
                 <category android:name="android.intent.category.LAUNCHER" />
