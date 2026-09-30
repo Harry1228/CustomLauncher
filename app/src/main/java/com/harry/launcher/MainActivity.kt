@@ -173,7 +173,7 @@ fun HomeScreen(
         verticalArrangement = Arrangement.SpaceBetween,
         horizontalAlignment = Alignment.CenterHorizontally
     ) {
-        // Clock & Search
+        // Clock & Search Bar
         Column(
             modifier = Modifier
                 .padding(top = 40.dp)
@@ -248,9 +248,11 @@ fun HomeScreen(
                 verticalAlignment = Alignment.CenterVertically
             ) {
                 dockApps.forEach { app ->
-                    AppIcon(app = app, showLabel = false) {
-                        onLaunchApp(app.packageName)
-                    }
+                    AppIcon(
+                        app = app,
+                        showLabel = false,
+                        onClick = { onLaunchApp(app.packageName) }
+                    )
                 }
 
                 IconButton(
