@@ -44,6 +44,8 @@ fun HomeScreen(
     appWidgetHost: AppWidgetHost,
     appWidgetManager: AppWidgetManager,
     onOpenDrawer: () -> Unit,
+    onSwipeDown: () -> Unit,
+    onDoubleTap: () -> Unit,
     onLongPressHome: () -> Unit,
     onLaunchApp: (String) -> Unit,
     onRemoveWidget: (Int) -> Unit
@@ -58,31 +60,27 @@ fun HomeScreen(
             .padding(horizontal = 16.dp, vertical = 8.dp)
             .draggable(
                 state = rememberDraggableState { delta ->
-                    if (delta < -14f) onOpenDrawer()
+                    when {
+                        delta < -12f -> onOpenDrawer() // Swipe Up -> Drawer
+                        delta > 12f -> onSwipeDown()   // Swipe Down -> Notifications Panel
+                    }
                 },
                 orientation = Orientation.Vertical
-            )
-            .pointerInput(Unit) {
-                detectTapGestures(
-                    onLongPress = {
-                        haptic.performHapticFeedback(HapticFeedbackType.LongPress)
-                        onLongPressHome()
-                    }
-                )
-            },
+            ),
         verticalArrangement = Arrangement.SpaceBetween,
         horizontalAlignment = Alignment.CenterHorizontally
     ) {
+        // Digital Clock & Search Bar
         Column(
             modifier = Modifier
-                .padding(top = 32.dp)
+                .padding(top = 28.dp)
                 .fillMaxWidth(),
             horizontalAlignment = Alignment.CenterHorizontally
         ) {
             Text(text = currentTime, fontSize = 64.sp, fontWeight = FontWeight.Bold, color = Color.White)
             Text(text = currentDate, fontSize = 17.sp, color = Color.White.copy(alpha = 0.85f))
 
-            Spacer(modifier = Modifier.height(20.dp))
+            Spacer(modifier = Modifier.height(18.dp))
 
             Surface(
                 onClick = onOpenDrawer,
@@ -105,52 +103,80 @@ fun HomeScreen(
             }
         }
 
-        LazyColumn(
+        // Center Touch Surface for Gestures and Widgets
+        Box(
             modifier = Modifier
                 .weight(1f)
                 .fillMaxWidth()
-                .padding(vertical = 8.dp),
-            verticalArrangement = Arrangement.spacedBy(10.dp)
+                .pointerInput(Unit) {
+                    detectTapGestures(
+                        onDoubleTap = {
+                            haptic.performHapticFeedback(HapticFeedbackType.LongPress)
+                            onDoubleTap()
+                        },
+                        onLongPress = {
+                            haptic.performHapticFeedback(HapticFeedbackType.LongPress)
+                            onLongPressHome()
+                        }
+                    )
+                }
         ) {
-            items(items = widgetIds, key = { it }) { id ->
-                WidgetHostItem(
-                    widgetId = id,
-                    appWidgetHost = appWidgetHost,
-                    appWidgetManager = appWidgetManager,
-                    onRemove = { onRemoveWidget(id) }
-                )
+            if (widgetIds.isNotEmpty()) {
+                LazyColumn(
+                    modifier = Modifier.fillMaxSize(),
+                    verticalArrangement = Arrangement.spacedBy(10.dp)
+                ) {
+                    items(items = widgetIds, key = { it }) { id ->
+                        WidgetHostItem(
+                            widgetId = id,
+                            appWidgetHost = appWidgetHost,
+                            appWidgetManager = appWidgetManager,
+                            onRemove = { onRemoveWidget(id) }
+                        )
+                    }
+                }
             }
         }
 
+        // Dock Layer
         Surface(
             shape = RoundedCornerShape(26.dp),
             color = Color.Black.copy(alpha = 0.45f),
             modifier = Modifier
                 .fillMaxWidth()
                 .padding(bottom = 12.dp)
+                .draggable(
+                    state = rememberDraggableState { delta ->
+                        if (delta < -10f) onOpenDrawer()
+                    },
+                    orientation = Orientation.Vertical
+                )
         ) {
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .padding(vertical = 12.dp, horizontal = 8.dp),
-                horizontalArrangement = Arrangement.SpaceEvenly,
+                    .padding(vertical = 10.dp, horizontal = 4.dp),
                 verticalAlignment = Alignment.CenterVertically
             ) {
                 dockApps.forEach { app ->
-                    AppIconItem(
-                        app = app,
-                        showLabel = false,
-                        onClick = { onLaunchApp(app.packageName) }
-                    )
+                    Box(modifier = Modifier.weight(1f), contentAlignment = Alignment.Center) {
+                        AppIconItem(
+                            app = app,
+                            showLabel = false,
+                            onClick = { onLaunchApp(app.packageName) }
+                        )
+                    }
                 }
 
-                IconButton(
-                    onClick = onOpenDrawer,
-                    modifier = Modifier
-                        .size(50.dp)
-                        .background(Color.White.copy(alpha = 0.15f), CircleShape)
-                ) {
-                    Icon(Icons.Default.Apps, contentDescription = "Open Drawer", tint = Color.White)
+                Box(modifier = Modifier.weight(1f), contentAlignment = Alignment.Center) {
+                    IconButton(
+                        onClick = onOpenDrawer,
+                        modifier = Modifier
+                            .size(48.dp)
+                            .background(Color.White.copy(alpha = 0.15f), CircleShape)
+                    ) {
+                        Icon(Icons.Default.Apps, contentDescription = "Open Drawer", tint = Color.White)
+                    }
                 }
             }
         }
