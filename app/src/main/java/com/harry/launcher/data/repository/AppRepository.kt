@@ -9,6 +9,8 @@ import android.graphics.Bitmap
 import android.graphics.Canvas
 import android.graphics.drawable.BitmapDrawable
 import android.graphics.drawable.Drawable
+import android.net.Uri
+import android.provider.MediaStore
 import androidx.compose.ui.graphics.ImageBitmap
 import androidx.compose.ui.graphics.asImageBitmap
 import com.harry.launcher.data.model.AppModel
@@ -35,21 +37,56 @@ class AppRepository(private val context: Context) {
                 AppModel(
                     label = it.loadLabel(pm).toString(),
                     packageName = it.activityInfo.packageName,
-                    icon = drawableToHardwareBitmap(drawable)
+                    icon = drawableToOptimizedBitmap(drawable)
                 )
             }
             .sortedBy { it.label.lowercase() }
     }
 
-    private fun drawableToHardwareBitmap(drawable: Drawable): ImageBitmap {
-        if (drawable is BitmapDrawable && drawable.bitmap != null) {
-            return drawable.bitmap.asImageBitmap()
+    suspend fun loadSingleApp(packageName: String): AppModel? = withContext(Dispatchers.IO) {
+        if (packageName == context.packageName) return@withContext null
+        val pm = context.packageManager
+        val intent = Intent(Intent.ACTION_MAIN).apply {
+            addCategory(Intent.CATEGORY_LAUNCHER)
+            `package` = packageName
         }
-        val width = if (drawable.intrinsicWidth > 0) drawable.intrinsicWidth else 128
-        val height = if (drawable.intrinsicHeight > 0) drawable.intrinsicHeight else 128
-        val bitmap = Bitmap.createBitmap(width, height, Bitmap.Config.ARGB_8888)
+        val resolveInfo = pm.queryIntentActivities(intent, 0).firstOrNull()
+
+        resolveInfo?.let {
+            val drawable = it.loadIcon(pm)
+            AppModel(
+                label = it.loadLabel(pm).toString(),
+                packageName = it.activityInfo.packageName,
+                icon = drawableToOptimizedBitmap(drawable)
+            )
+        }
+    }
+
+    fun resolveDefaultDockPackages(): List<String> {
+        val pm = context.packageManager
+        val dockList = mutableListOf<String>()
+
+        fun addFromIntent(intent: Intent) {
+            val resolve = pm.resolveActivity(intent, PackageManager.MATCH_DEFAULT_ONLY)
+            val pkg = resolve?.activityInfo?.packageName
+            if (pkg != null && pkg != "android" && !dockList.contains(pkg)) {
+                dockList.add(pkg)
+            }
+        }
+
+        addFromIntent(Intent(Intent.ACTION_DIAL))
+        addFromIntent(Intent(Intent.ACTION_VIEW, Uri.parse("https://www.google.com")))
+        addFromIntent(Intent(Intent.ACTION_SENDTO, Uri.parse("smsto:")))
+        addFromIntent(Intent(MediaStore.ACTION_IMAGE_CAPTURE))
+
+        return dockList
+    }
+
+    private fun drawableToOptimizedBitmap(drawable: Drawable): ImageBitmap {
+        val targetSize = 144
+        val bitmap = Bitmap.createBitmap(targetSize, targetSize, Bitmap.Config.ARGB_8888)
         val canvas = Canvas(bitmap)
-        drawable.setBounds(0, 0, canvas.width, canvas.height)
+        drawable.setBounds(0, 0, targetSize, targetSize)
         drawable.draw(canvas)
         return bitmap.asImageBitmap()
     }

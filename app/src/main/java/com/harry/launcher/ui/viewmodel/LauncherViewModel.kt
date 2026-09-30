@@ -5,6 +5,8 @@ import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.viewModelScope
 import com.harry.launcher.data.model.AppModel
 import com.harry.launcher.data.repository.AppRepository
+import com.harry.launcher.data.source.PackageEvent
+import com.harry.launcher.data.source.PackageMonitor
 import com.harry.launcher.ui.state.LauncherUiState
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -12,37 +14,100 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 
-class LauncherViewModel(private val repository: AppRepository) : ViewModel() {
+class LauncherViewModel(
+    private val repository: AppRepository,
+    private val packageMonitor: PackageMonitor
+) : ViewModel() {
 
     private val _uiState = MutableStateFlow(LauncherUiState())
     val uiState: StateFlow<LauncherUiState> = _uiState.asStateFlow()
 
     init {
-        loadApps()
+        loadInitialApps()
         loadWidgets()
+        observePackageChanges()
     }
 
-    fun loadApps() {
+    private fun loadInitialApps() {
         viewModelScope.launch {
             _uiState.update { it.copy(isLoading = true) }
             val apps = repository.loadInstalledApps()
+            val preferredDockPkgs = repository.resolveDefaultDockPackages()
 
-            val dock = apps.filter {
-                val pkg = it.packageName.lowercase()
-                pkg.contains("dialer") || pkg.contains("chrome") ||
-                pkg.contains("messaging") || pkg.contains("camera") ||
-                pkg.contains("whatsapp")
-            }.take(4)
+            val dock = mutableListOf<AppModel>()
+            for (pkg in preferredDockPkgs) {
+                apps.find { it.packageName == pkg }?.let { dock.add(it) }
+            }
+            if (dock.size < 4) {
+                for (app in apps) {
+                    if (!dock.contains(app)) dock.add(app)
+                    if (dock.size == 4) break
+                }
+            }
 
             _uiState.update {
                 it.copy(
                     allApps = apps,
                     filteredApps = apps,
-                    dockApps = dock,
+                    dockApps = dock.take(4),
                     isLoading = false
                 )
             }
         }
+    }
+
+    private fun observePackageChanges() {
+        viewModelScope.launch {
+            packageMonitor.observePackageEvents().collect { event ->
+                when (event) {
+                    is PackageEvent.Added -> handlePackageAdded(event.packageName)
+                    is PackageEvent.Removed -> handlePackageRemoved(event.packageName)
+                    is PackageEvent.Updated -> handlePackageUpdated(event.packageName)
+                }
+            }
+        }
+    }
+
+    private suspend fun handlePackageAdded(packageName: String) {
+        val newApp = repository.loadSingleApp(packageName) ?: return
+        _uiState.update { state ->
+            val updatedAll = (state.allApps.filterNot { it.packageName == packageName } + newApp)
+                .sortedBy { it.label.lowercase() }
+            val updatedFiltered = applyFilter(updatedAll, state.searchQuery)
+            state.copy(allApps = updatedAll, filteredApps = updatedFiltered)
+        }
+    }
+
+    private fun handlePackageRemoved(packageName: String) {
+        _uiState.update { state ->
+            val updatedAll = state.allApps.filterNot { it.packageName == packageName }
+            val updatedFiltered = state.filteredApps.filterNot { it.packageName == packageName }
+            val updatedDock = state.dockApps.filterNot { it.packageName == packageName }
+            state.copy(
+                allApps = updatedAll,
+                filteredApps = updatedFiltered,
+                dockApps = updatedDock
+            )
+        }
+    }
+
+    private suspend fun handlePackageUpdated(packageName: String) {
+        val updatedApp = repository.loadSingleApp(packageName) ?: return
+        _uiState.update { state ->
+            val updatedAll = state.allApps.map { if (it.packageName == packageName) updatedApp else it }
+                .sortedBy { it.label.lowercase() }
+            val updatedFiltered = applyFilter(updatedAll, state.searchQuery)
+            val updatedDock = state.dockApps.map { if (it.packageName == packageName) updatedApp else it }
+            state.copy(
+                allApps = updatedAll,
+                filteredApps = updatedFiltered,
+                dockApps = updatedDock
+            )
+        }
+    }
+
+    private fun applyFilter(apps: List<AppModel>, query: String): List<AppModel> {
+        return if (query.isBlank()) apps else apps.filter { it.label.contains(query, ignoreCase = true) }
     }
 
     private fun loadWidgets() {
@@ -64,12 +129,7 @@ class LauncherViewModel(private val repository: AppRepository) : ViewModel() {
 
     fun onSearchQueryChange(query: String) {
         _uiState.update { state ->
-            val filtered = if (query.isBlank()) {
-                state.allApps
-            } else {
-                state.allApps.filter { it.label.contains(query, ignoreCase = true) }
-            }
-            state.copy(searchQuery = query, filteredApps = filtered)
+            state.copy(searchQuery = query, filteredApps = applyFilter(state.allApps, query))
         }
     }
 
@@ -98,11 +158,14 @@ class LauncherViewModel(private val repository: AppRepository) : ViewModel() {
     }
 }
 
-class LauncherViewModelFactory(private val repository: AppRepository) : ViewModelProvider.Factory {
+class LauncherViewModelFactory(
+    private val repository: AppRepository,
+    private val packageMonitor: PackageMonitor
+) : ViewModelProvider.Factory {
     override fun <T : ViewModel> create(modelClass: Class<T>): T {
         if (modelClass.isAssignableFrom(LauncherViewModel::class.java)) {
             @Suppress("UNCHECKED_CAST")
-            return LauncherViewModel(repository) as T
+            return LauncherViewModel(repository, packageMonitor) as T
         }
         throw IllegalArgumentException("Unknown ViewModel class")
     }
